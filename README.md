@@ -1,8 +1,7 @@
 # SOV Chat (front-end) README
-## By [BCquqi](https://github.com/BCquqi)
 
 > 
-> 项目路径：`https://github.com/BKYJX/Sov`
+> 项目路径：`https://github.com/SovChat/Sov`
 > 预览访问地址：`none yet`
 > 对接后端：`https://chat.bkyjx.top`（sov‑serverside Go后端）
 
