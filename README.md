@@ -1,8 +1,10 @@
-# SOV Chat（前端）
+# SOV Chat (front-end) README
+## By [BCquqi](https://github.com/BCquqi)
 
+> 
 > 项目路径：`https://github.com/BKYJX/Sov`
-> 预览访问地址：`http://10.66.1.98/`（由 VS Code Live Server 托管本目录）
-> 对接后端：`sov-serverside`（Go，单进程单群组，文件存储）
+> 预览访问地址：`none yet`
+> 对接后端：`https://chat.bkyjx.top`（sov‑serverside Go后端）
 
 ## 项目文件结构
 
@@ -169,4 +171,4 @@ curl http://127.0.0.1:8443/auth/me -H "Authorization: Bearer <token>"
 ## 更新记录
 
 > 后续所有**工作任务模式**产出的变更，仅更新本文档，旧迭代历史不保留。
-> 修改完成后同步更新此 README：功能、配置、注意事项、待实现清单。
+> 修改完成后同步更新此README：功能、配置、注意事项、待实现清单。
