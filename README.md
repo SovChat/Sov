@@ -1,164 +1,172 @@
-# SOV Chat (front-end) README
-## By [BCquqi](https://github.com/BCquqi)
+# SOV Chat（前端）
 
-> 
 > 项目路径：`https://github.com/BKYJX/Sov`
-> 预览访问地址：`none yet`
-> 对接后端：`https://chat.bkyjx.top`（sov‑serverside Go后端）
+> 预览访问地址：`http://10.66.1.98/`（由 VS Code Live Server 托管本目录）
+> 对接后端：`sov-serverside`（Go，单进程单群组，文件存储）
 
 ## 项目文件结构
 
 ```
-├─ index.html          # HTML骨架，只保留DOM结构，不包含CSS、JS
-├─ style.css           # 全部样式、主题、消息分组样式
-├─ script.js           # 全部业务逻辑、UI渲染、后端对接、主题切换
+├─ index.html          # HTML 骨架：聊天界面 + 登录/注册浮层，不含 CSS、JS
+├─ style.css           # 全部样式：主题、消息分组、登录卡片、Toast
+├─ script.js           # 全部逻辑：登录对接、UI 渲染、轮询、主题
+├─ preview.html        # 早期单文件预览稿（存档参考，不参与当前架构）
 └─ README.md           # 本说明文档
 ```
 
 ## 当前已实现功能
 
-### UI聊天功能
+### 账号与登录（新增）
 
-1. **黑白主题系统**
-   - 白天 / 黑夜 / 自适应（跟随系统）
-   - `data-theme`挂载在`<html>`根节点，整页面背景同步切换，修复白天模式大背景黑色Bug
-   - 主题配置本地存储，页面刷新自动记忆
-2. **消息渲染规则（Discord风格）**
-   - 同一用户连续多条消息：仅第一条展示头像、用户名、时间；后续消息仅展示文本，头像位置留白对齐
-   - 分隔横线**只渲染在不同说话者的消息组之间**；同一人连续消息组内部无分割线；页面最后一条消息下方无多余横线
-   - 消息操作按钮（回复、编辑）悬浮在消息块**右上角**，鼠标悬浮消息才显示，减少空白间隙
-3. **输入框能力**
-   - 使用`textarea`支持多行文本；`Shift+Enter`换行，`Enter`发送消息
-   - 输入框聚焦有视觉高亮反馈；全空格内容提交会被拦截并清空输入框
-   - XSS防护：所有用户输入做HTML转义，防止脚本注入
-4. **其他UI组件**
-   - @提及高亮渲染
-   - 消息日期分隔条渲染
-   - 侧边栏频道列表（静态骨架，预留切换接口）
-   - 侧边成员列表，收到新用户消息自动新增成员
-   - 空状态提示（暂无消息）
-   - 消息发送完成自动滚动到底部
+1. **登录 / 注册浮层**
+   - 未登录时聊天界面被模糊锁定（`body[data-auth="locked"]`），浮层覆盖在最上层
+   - 登录、注册两个 Tab 切换；注册额外显示「显示名」「确认密码」
+   - 登录卡片顶部展示后端探测结果：群名、成员数、入群规则（公开 / 私有）
+2. **会话机制**
+   - 登录/注册成功后，后端下发会话令牌；前端在 `Authorization: Bearer <token>` 中携带
+   - 令牌与展示名保存在 `localStorage['sov-session']`，**密码永不落地**
+   - 刷新页面自动恢复登录态（`GET /auth/me` 校验）；令牌失效自动清理并回到登录页
+   - 顶栏显示当前用户（头像 + 显示名 + 管理员标记）与退出按钮
+3. **入群规则（与后端一致）**
+   - 公开频道：注册即入群，注册完成后可直接发言
+   - 私有群组：注册仅创建账号，聊天区提示「等待管理员审批」，**且不轮询消息接口**（避免无意义的 403）
+4. **前端前置校验**：用户名 `^[A-Za-z0-9_-]{1,64}$`、密码 ≥6 位、两次密码一致、显示名 ≤32 字符
+5. **错误反馈**：后端错误文案内联展示在登录卡片；聊天中的失败通过 Toast 提示
+6. **后端不可达时优雅降级**：明确提示「无法连接后端服务（http://<host>:8443）」，而不是静默失败
+
+### UI 聊天功能
+
+1. **黑白主题系统**：白天 / 黑夜 / 自适应（跟随系统）；`data-theme` 挂在 `<html>` 上；选择存 `localStorage`
+2. **消息渲染规则（Discord 风格）**
+   - 同一用户连续多条消息：仅第一条展示头像、用户名、时间；后续消息头像位置留白对齐
+   - 分隔横线只出现在不同说话者的消息组之间；最后一条消息下方无多余横线
+   - 消息操作按钮（回复、编辑）悬浮在消息块右上角，鼠标悬浮才显示
+   - **优先显示 displayName**（由后端 `/members/list` 从 `accounts.txt` 关联得到），无则回退 userId
+3. **输入框能力**：`textarea` 多行；`Shift+Enter` 换行、`Enter` 发送；聚焦高亮；全空格提交被拦截；XSS 转义
+4. **其他 UI 组件**：@提及高亮、日期分隔条、频道列表（general 对接后端，开发/语音为本地频道）、成员列表（含显示名）、空状态提示、发送后自动滚动到底
 
 ### 后端对接模块
 
-> 
-> 后端仓库：sov‑serverside，Go语言实现E2EE群组服务
+1. **认证方式**
+   - 首选：`Authorization: Bearer <token>`（登录/注册接口下发的会话令牌）
+   - 兼容：`X-User-Id` + `X-Password`（后端仍支持，前端默认不再使用）
+2. **接口清单**
 
-1. **配置开关**
-   - `CONFIG.backendEnabled = true`：开启真实后端对接；设置为`false`切换纯内存模拟模式（本地调试UI，不请求网络）
-2. **认证方式**
-   - 请求头携带自定义Header：`X‑User‑Id`、`X‑Password`，和后端账号匹配
-3. **接口清单**| 接口 | 方法 | 作用 |
+| 接口 | 方法 | 作用 |
 | --- | --- | --- |
-| `/health` | GET | 后端健康探测 |
-| `/chat/messages` | GET | 拉取历史加密消息，支持`since`时间戳做增量轮询 |
-| `/chat/send` | POST | 发送加密消息payload到后端 |
-| `/members/list` | GET | 拉取群组成员列表 |
-4. **消息发送逻辑**
-   - **乐观渲染**：点击发送，前端立刻渲染消息，提升体验
-   - 请求后端失败：自动回滚，删除刚刚渲染的消息；控制台输出错误日志
-5. **增量轮询**
-   - 定时轮询后端获取新消息；基于消息ID做去重，不会重复渲染同一条消息
-6. **消息解析规则**
-   - 后端原始行格式：`timestamp|senderId|ciphertext|keysJson`
-   - 前端解析拆分字段；E2EE解密逻辑预留占位，待后续实现
+| `/health` | GET | 后端健康探测 + 群组概况（名称/人数/是否公开） |
+| `/auth/register` | POST | 注册账号（公开频道注册即入群） |
+| `/auth/login` | POST | 登录，返回会话令牌 |
+| `/auth/logout` | POST | 登出，吊销当前令牌 |
+| `/auth/me` | GET | 校验登录态并返回身份信息 |
+| `/chat/messages` | GET | 拉取历史加密消息，支持 `since` 增量轮询 |
+| `/chat/send` | POST | 发送加密消息 payload |
+| `/members/list` | GET | 拉取成员列表（含 displayName） |
+
+3. **消息发送逻辑**：乐观渲染 → 失败自动回滚 + Toast 提示
+4. **增量轮询**：每 3 秒按 `since` 拉取，行级 id 去重；仅 `general` 频道且已入群时轮询
+5. **消息解析规则**：后端原始行 `timestamp|senderId|ciphertext|encryptedKeysJson`
+   - `ciphertext` 当前为 `base64(JSON({v:1, content:文本}))`，**属于传输占位，不是真正 E2EE**
+   - `encryptedKeys` 前端暂未使用，真正端到端加密待后续实现
 
 ## script.js 核心配置区
 
-```
+```js
 const CONFIG = {
-    // 后端基础地址
-    api:{
-        baseUrl:"[https://chat.bkyjx.top](https://chat.bkyjx.top)",
+    channel: { name: 'general', tag: '动态测试' },
+    api: {
+        // 自动跟随页面 host，固定后端端口 8443
+        get baseUrl() { return location.protocol + '//' + location.hostname + ':8443'; },
+        endpoints: {
+            health: '/health',
+            list: '/chat/messages',
+            send: '/chat/send',
+            members: '/members/list',
+            register: '/auth/register',
+            login: '/auth/login',
+            logout: '/auth/logout',
+            me: '/auth/me',
+        }
     },
-    // 是否启用后端，false=本地内存模拟模式（仅调试UI）
-    backendEnabled:true,
-    // 用户认证信息，必须和sov‑serverside服务启动账号保持一致
-    user:{
-        userId:"",
-        password:""
-    },
-    pollInterval:3000 //轮询间隔，单位ms
-}
+    pollInterval: 3000,        // 轮询间隔（ms）
+    sessionKey: 'sov-session', // 登录态在 localStorage 中的键名
+};
 ```
+
+> 登录态对象 `session` 与硬编码账号无关；**请勿再把账号密码写进前端代码**。
 
 ## 部署 & 联调关键注意事项
 
-### 1. CORS跨域问题（高频踩坑）
+### 1. 后端地址约定（重要）
 
-前端页面地址：`[http://10.66.1.98](http://10.66.1.98)`；后端域名`[https://chat.bkyjx.top](https://chat.bkyjx.top)`，属于跨域。
+`baseUrl` 由当前页面的 `location.hostname` 推导，端口固定 `8443`：
 
-1. Go后端必须添加全局CORS中间件，**不能直接设置`Access‑Control‑Allow‑Origin: *`**（项目使用自定义请求头`X‑User‑Id/X‑Password`，*不兼容）
-2. 如果后端前置Nginx反向代理，**Nginx层也需要处理CORS与OPTIONS预检请求**；只修改Go代码无效
-3. 修改后端配置后，建议浏览器使用无痕窗口测试，规避OPTIONS预检缓存
+- 页面在 `http://10.66.1.98/` → 后端地址为 `http://10.66.1.98:8443`
+- 页面在 `http://127.0.0.1:8080/` → 后端地址为 `http://127.0.0.1:8443`
 
-> 
-> Go CORS中间件参考代码
+因此**前端页面与后端必须同机（同 host）+ 后端监听 8443**。若后端部署在别的域名/端口，
+请修改 `CONFIG.api.baseUrl`。
 
-```
-func corsMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Set("Access-Control-Allow-Origin", "[http://10.66.1.98](http://10.66.1.98)")
-        w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "X-User-Id,X-Password,Content-Type")
-        w.Header().Set("Access-Control-Allow-Credentials", "true")
-        if r.Method == http.MethodOptions {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
-        next.ServeHTTP(w, r)
-    })
-}
-```
+⚠️ 直接以 `file://` 方式打开 `index.html` 不可用（`location.hostname` 为空），必须经 HTTP 服务访问。
 
-### 2. 本地调试模式
+### 2. CORS 跨域
 
-修改`CONFIG.backendEnabled = false`，关闭网络请求，消息保存在浏览器内存。
+前端在 80 端口、后端在 8443，属于跨域。后端 `main.go` 的 `corsMiddleware` 已放行：
 
-> 
-> 提示：内存模式刷新页面消息全部丢失，仅用于UI效果调试。
+- `Access-Control-Allow-Headers` 必须包含 **`Authorization`**（会话令牌需要），以及原有的 `Content-Type, X-User-Id, X-Password`
+- `GET`/`POST`/`OPTIONS` 预检由后端返回 `204`
 
-### 3. 联调测试方式
+若后端前置于 Nginx，**Nginx 层同样需要放行上述请求头**，否则浏览器预检失败。
 
-打开浏览器F12开发者工具：
+### 3. 后端未启动时的表现（预期行为）
 
-1. Console面板：查看报错，例如发送失败、解析异常
-2. Network面板：查看fetch请求，确认请求头、返回内容；`net::ERR_CONNECTION_REFUSED`代表后端不可访问；CORS报错代表跨域配置问题
+登录卡片会显示「后端未连接」并给出可读的错误提示，界面停留在登录态；这是设计内的降级行为，
+不是页面崩溃。启动后端后刷新页面即可正常登录。
 
-快速验证脚本（浏览器控制台执行，填入真实账号）：
+### 4. 联调测试方式
 
-```
-fetch("[https://chat.bkyjx.top/chat/messages](https://chat.bkyjx.top/chat/messages)",{
-  method:"GET",
-  headers:{
-    "X-User-Id":"你的userId",
-    "X-Password":"你的password"
-  }
-}).then(r=>r.json()).then(res=>{console.log("成功",res)}).catch(e=>console.error("失败",e))
+打开浏览器 F12：
+
+1. **Console**：查看报错（登录失败、发送失败、解析异常）
+2. **Network**：确认请求头是否携带 `Authorization: Bearer ...`、返回内容与状态码
+3. **Application → Local Storage**：确认 `sov-session` 中只有 token 与展示信息，**没有密码**
+
+命令行快速验证（后端已启动时）：
+
+```bash
+# 注册（公开频道注册即入群）
+curl -X POST http://127.0.0.1:8443/auth/register \
+     -H "Content-Type: application/json" \
+     -d '{"userId":"bob","password":"bobpass123","displayName":"鲍勃"}'
+
+# 用返回的 token 调用受保护接口
+curl http://127.0.0.1:8443/auth/me -H "Authorization: Bearer <token>"
 ```
 
 ## 当前待实现清单
 
-1. 回复、编辑消息完整业务逻辑（当前仅UI，无提交后端）
-2. 真正E2EE解密实现（当前ciphertext仅占位）
-3. 正在输入提示
-4. 附件、图片上传发送
+1. 回复、编辑消息的完整业务逻辑（当前仅 UI，无后端提交）
+2. 真正的 E2EE 解密实现（当前 `ciphertext` 只是 base64 占位）
+3. 正在输入提示、在线状态（当前"在线人数"实为成员总数）
+4. 附件、图片上传发送（后端 `/files/*` 已就绪，前端未接入）
 5. 消息搜索
-6. 频道切换历史缓存
-7. 断线重连、WebSocket备选方案
-8. 用户离线/在线状态展示
-9. Toast用户可见错误提示（当前仅console输出）
+6. 多频道历史缓存与后端多群组支持
+7. WebSocket / 断线重连（当前为 3 秒轮询）
+8. 记住登录时长、「记住我」与多设备会话管理界面
+9. 修改密码 / 忘记密码的前端入口（后端 `/members/set-password` 已支持）
 
 ## 自测指引
 
-1. 主题切换：切换白天黑夜自适应，检查全部页面背景、组件样式是否正常
-2. 连续消息发送：同一账号连续发送多条，确认分组、头像隐藏、分割线位置正确
-3. 跨用户消息：模拟不同用户消息，确认分割线出现在不同用户之间
-4. 发送：空内容、全空格拦截；Shift+Enter多行换行；回车/按钮发送
-5. 后端联调：开启`backendEnabled=true`，观察乐观渲染+失败回滚行为
+1. **未登录**：打开页面应收起聊天内容，出现登录卡片；断开后端时应显示「后端未连接」
+2. **注册（公开频道）**：注册新账号 → 直接进入聊天 → 发送消息成功；顶栏与侧栏显示显示名
+3. **注册（私有群组）**：注册后聊天区提示等待审批，且 Network 面板中**没有** `/chat/messages` 轮询
+4. **刷新恢复**：刷新页面应自动恢复登录态并拉回历史消息，无需重新输密码
+5. **登出**：点击顶栏退出按钮 → 回到登录卡片，`localStorage` 中 `sov-session` 被清除
+6. **错误分支**：错误密码、重复注册、非法用户名、两次密码不一致均应给出可读提示
+7. **主题**：切换白天/黑夜/自适应，检查登录卡片、聊天界面背景与组件样式均正常
+8. **消息分组**：同一账号连续发送多条，确认分组、头像隐藏、分割线位置正确
 
 ## 更新记录
 
-> 
 > 后续所有**工作任务模式**产出的变更，仅更新本文档，旧迭代历史不保留。
-> 修改完成后同步更新此README：功能、配置、注意事项、待实现清单。
+> 修改完成后同步更新此 README：功能、配置、注意事项、待实现清单。

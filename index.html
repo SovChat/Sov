@@ -6,7 +6,7 @@
     <title>SOV chat</title>
         <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-auth="locked">
 
 <div class="chat-app" id="app">
 
@@ -20,7 +20,14 @@
                 <span class="online-badge"><span class="dot"></span> <span id="onlineCount">1</span></span>
             </div>
         </div>
-        <div class="header-right">
+                <div class="header-right">
+            <div class="user-chip" id="userChip" hidden>
+                <span class="user-avatar" id="userChipAvatar">?</span>
+                <span class="user-name" id="userChipName">未登录</span>
+                <button class="icon-btn" id="logoutBtn" type="button" aria-label="退出登录" title="退出登录">
+                    <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+            </div>
             <div class="theme-toggle-group">
                 <button class="theme-btn" id="themeAuto">自适应</button>
                 <button class="theme-btn" id="themeLight">白天</button>
@@ -103,6 +110,56 @@
         </div>
     </div>
 </div>
+
+<!-- 登录 / 注册浮层：未登录时覆盖在聊天界面之上 -->
+<div class="auth-overlay" id="authOverlay">
+    <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <div class="auth-brand">
+            <div class="server-icon">#</div>
+            <div class="auth-brand-text">
+                <h1 id="authTitle">SOV chat</h1>
+                <p class="auth-sub" id="authGroupInfo">正在连接服务器…</p>
+            </div>
+        </div>
+
+        <div class="auth-tabs" role="tablist">
+            <button type="button" class="auth-tab active" data-auth-tab="login" id="tabLogin">登录</button>
+            <button type="button" class="auth-tab" data-auth-tab="register" id="tabRegister">注册</button>
+        </div>
+
+        <form id="authForm" novalidate>
+            <label class="auth-field">
+                <span class="auth-label">用户名</span>
+                <input id="authUserId" type="text" autocomplete="username" maxlength="64"
+                       placeholder="字母、数字、下划线或连字符" required>
+            </label>
+            <label class="auth-field" id="authDisplayRow" hidden>
+                <span class="auth-label">显示名</span>
+                <input id="authDisplayName" type="text" autocomplete="nickname" maxlength="32"
+                       placeholder="留空则与用户名相同">
+            </label>
+            <label class="auth-field">
+                <span class="auth-label">密码</span>
+                <input id="authPassword" type="password" autocomplete="current-password" minlength="6"
+                       placeholder="至少 6 位" required>
+            </label>
+            <label class="auth-field" id="authConfirmRow" hidden>
+                <span class="auth-label">确认密码</span>
+                <input id="authConfirm" type="password" autocomplete="new-password" minlength="6"
+                       placeholder="再次输入密码">
+            </label>
+
+            <div class="auth-error" id="authError" hidden></div>
+            <div class="auth-note" id="authNote" hidden></div>
+
+            <button type="submit" class="auth-submit" id="authSubmit">登录</button>
+        </form>
+
+        <p class="auth-hint" id="authHint"></p>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
 
 <script src="script.js"></script>
 

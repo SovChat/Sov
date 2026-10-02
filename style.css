@@ -835,3 +835,200 @@
             }
         }
     
+
+        /* ===== 登录 / 注册 浮层 ===== */
+        /* hidden 属性优先级最高：.auth-field 等使用了 display:flex，需要显式压过 */
+        [hidden] { display: none !important; }
+
+        body[data-auth="locked"] .chat-app {
+            filter: blur(7px);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .auth-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(18, 18, 28, 0.42);
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 50;
+        }
+
+        .auth-card {
+            width: 100%;
+            max-width: 380px;
+            background-color: var(--bg-header);
+            border: 1px solid var(--border-header);
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            animation: msg-in 0.2s ease;
+        }
+
+        .auth-brand { display: flex; align-items: center; gap: 12px; }
+        .auth-brand-text h1 { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+        .auth-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+
+        .auth-tabs {
+            display: flex;
+            gap: 3px;
+            background-color: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 30px;
+            padding: 3px;
+        }
+
+        .auth-tab {
+            flex: 1;
+            background: transparent;
+            border: none;
+            padding: 7px 0;
+            border-radius: 26px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .auth-tab:hover { color: var(--text-primary); }
+        .auth-tab.active { background-color: var(--active-bg); color: var(--text-primary); }
+
+        #authForm { display: flex; flex-direction: column; gap: 12px; }
+
+        .auth-field { display: flex; flex-direction: column; gap: 5px; }
+        .auth-label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+
+        .auth-field input {
+            background-color: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+
+        .auth-field input:focus {
+            border-color: var(--scrollbar-thumb);
+            box-shadow: 0 0 0 3px rgba(100, 100, 160, 0.18);
+        }
+
+        .auth-field input::placeholder { color: var(--text-light); }
+
+        .auth-error, .auth-note {
+            font-size: 13px;
+            padding: 9px 12px;
+            border-radius: 10px;
+            line-height: 1.45;
+            word-break: break-word;
+        }
+
+        .auth-error {
+            background-color: rgba(214, 69, 69, 0.12);
+            border: 1px solid rgba(214, 69, 69, 0.35);
+            color: #c0392b;
+        }
+
+        [data-theme="dark"] .auth-error { color: #ff9b93; }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) .auth-error { color: #ff9b93; }
+        }
+
+        .auth-note {
+            background-color: var(--online-badge-bg);
+            border: 1px solid var(--input-border);
+            color: var(--online-badge-text);
+        }
+
+        .auth-submit {
+            background-color: var(--avatar-bg);
+            border: 1px solid var(--border-sidebar);
+            border-radius: 10px;
+            padding: 11px 0;
+            color: var(--avatar-text);
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.15s, opacity 0.15s;
+        }
+
+        .auth-submit:hover:not(:disabled) { background-color: var(--active-bg); }
+        .auth-submit:disabled { opacity: 0.6; cursor: default; }
+
+        .auth-hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+        /* ===== 顶栏当前用户 ===== */
+        .user-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 220px;
+            padding: 3px 4px 3px 4px;
+            background-color: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 30px;
+        }
+
+        .user-chip .user-avatar {
+            width: 26px;
+            height: 26px;
+            flex-shrink: 0;
+            border-radius: 50%;
+            background-color: var(--avatar-bg);
+            color: var(--avatar-text);
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .user-chip .user-name {
+            font-size: 13px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ===== 轻提示 Toast ===== */
+        .toast {
+            position: fixed;
+            left: 50%;
+            bottom: 28px;
+            z-index: 60;
+            max-width: 90vw;
+            padding: 10px 18px;
+            background-color: var(--bg-header);
+            border: 1px solid var(--border-header);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            color: var(--text-primary);
+            font-size: 14px;
+            text-align: center;
+            opacity: 0;
+            transform: translate(-50%, 20px);
+            pointer-events: none;
+            transition: opacity 0.2s, transform 0.2s;
+        }
+
+        .toast.show { opacity: 1; transform: translate(-50%, 0); }
+        .toast-error { border-color: rgba(214, 69, 69, 0.5); color: #d3564f; }
+        .toast-success { border-color: var(--online-dot); color: var(--online-badge-text); }
+
+        @media (max-width: 780px) {
+            .auth-card { padding: 18px; }
+            .user-chip .user-name { display: none; }
+        }
