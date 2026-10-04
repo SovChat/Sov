@@ -20,7 +20,7 @@
         },
         api: {
             // 自动跟随页面来源 host：页面在 10.66.1.98:80，后端同机 8443
-            get baseUrl() { return location.protocol + '//' + location.hostname + ':8443'; },
+            get baseUrl() { return location.protocol + '//' + location.hostname; },
             endpoints: {
                 health: '/health',
                 list: '/chat/messages',
