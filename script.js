@@ -98,10 +98,66 @@
         });
     }
 
-    // 渲染消息文本：先转义，再把 @用户名 高亮为 mention
+    // 行内 Markdown（输入须已转义）。行内代码与链接先占位，避免被加粗/斜体/@提及二次处理
+    function renderInlineMarkdown(line) {
+        const stash = [];
+        const keep = function(html) {
+            stash.push(html);
+            return '\u0000' + (stash.length - 1) + '\u0000';
+        };
+        let s = line.replace(/`([^`\n]+)`/g, function(_, code) {
+            return keep('<code>' + code + '</code>');
+        });
+        s = s.replace(/\[([^\]\n]+)\]\(([^()\s]+)\)/g, function(all, label, url) {
+            // 仅放行 http/https/mailto/相对链接，其余按原样显示（防 javascript: XSS）
+            if (!/^(https?:\/\/|mailto:|\/|#)/i.test(url)) return all;
+            return keep('<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>');
+        });
+        s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/\*(\S(?:[^*\n]*\S)?)\*/g, '<em>$1</em>');
+        s = s.replace(/@([\w\u4e00-\u9fa5_-]+)/g, '<span class="mention">@$1</span>');
+        return s.replace(/\u0000(\d+)\u0000/g, function(_, i) { return stash[+i]; });
+    }
+
+    // 渲染消息文本：先转义（防 XSS），再按行解析块级 Markdown（``` 代码块、- / 1. 列表），
+    // 行内语法（**粗体**、*斜体*、`代码`、[链接](url)、@提及）见 renderInlineMarkdown。
+    // 换行依赖 .msg-text 的 white-space: pre-wrap，块级元素前后不输出多余换行。
     function renderContent(text) {
-        const escaped = escapeHtml(text);
-        return escaped.replace(/@([\w\u4e00-\u9fa5_-]+)/g, '<span class="mention">@$1</span>');
+        const lines = escapeHtml(text).split('\n');
+        const ulRe = /^\s*-\s+/;
+        const olRe = /^\s*\d+\.\s+/;
+        const fenceRe = /^\s*```/;
+        let html = '';
+        let run = []; // 普通行缓冲，用 \n 连接
+        const flushRun = function() {
+            if (run.length) { html += run.join('\n'); run = []; }
+        };
+        let i = 0;
+        while (i < lines.length) {
+            if (fenceRe.test(lines[i])) {
+                flushRun();
+                const buf = [];
+                i++;
+                while (i < lines.length && !fenceRe.test(lines[i])) { buf.push(lines[i]); i++; }
+                i++; // 跳过收尾 ```（无则到文本末尾）
+                html += '<pre><code>' + buf.join('\n') + '</code></pre>';
+            } else if (ulRe.test(lines[i]) || olRe.test(lines[i])) {
+                flushRun();
+                const ordered = olRe.test(lines[i]);
+                const itemRe = ordered ? olRe : ulRe;
+                const items = [];
+                while (i < lines.length && itemRe.test(lines[i])) {
+                    items.push('<li>' + renderInlineMarkdown(lines[i].replace(itemRe, '')) + '</li>');
+                    i++;
+                }
+                html += ordered ? '<ol>' + items.join('') + '</ol>' : '<ul>' + items.join('') + '</ul>';
+            } else {
+                run.push(renderInlineMarkdown(lines[i]));
+                i++;
+            }
+        }
+        flushRun();
+        return html;
     }
 
     function formatTime(date) {
