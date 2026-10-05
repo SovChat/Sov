@@ -698,6 +698,43 @@
             padding-left: 22px;
         }
 
+        .msg-text h1,
+        .msg-text h2,
+        .msg-text h3,
+        .msg-text h4,
+        .msg-text h5 {
+            font-weight: 700;
+            margin: 6px 0 4px;
+            color: inherit;
+        }
+
+        .msg-text h1 { font-size: 1.6em; }
+        .msg-text h2 { font-size: 1.4em; }
+        .msg-text h3 { font-size: 1.25em; }
+        .msg-text h4 { font-size: 1.1em; }
+        .msg-text h5 { font-size: 1em; }
+
+        /* 数学公式占位：不渲染，仅原样展示 LaTeX 源码 */
+        .msg-text .math-inline {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 13px;
+            background-color: var(--input-bg);
+            padding: 1px 5px;
+            border-radius: 4px;
+        }
+
+        .msg-text .math-block {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 13px;
+            background-color: var(--input-bg);
+            border: 1px solid var(--border-msg);
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin: 4px 0;
+            text-align: center;
+            overflow-x: auto;
+        }
+
         .msg-actions {
             position: absolute;
             top: 0;

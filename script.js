@@ -113,6 +113,10 @@
             if (!/^(https?:\/\/|mailto:|\/|#)/i.test(url)) return all;
             return keep('<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>');
         });
+        // 行内数学 $...$：占位保护，先于加粗/斜体；KaTeX 渲染，未加载/抛错时回退原文
+        s = s.replace(/\$([^$\s](?:[^$\n]*[^$\s])?)\$(?!\$)/g, function(_, tex) {
+            return keep(renderMath(tex, false));
+        });
         s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
         s = s.replace(/\*(\S(?:[^*\n]*\S)?)\*/g, '<em>$1</em>');
         // @提及仅高亮真实存在的成员或 所有人，否则按普通文本渲染
@@ -123,6 +127,21 @@
         return s.replace(/\u0000(\d+)\u0000/g, function(_, i) { return stash[+i]; });
     }
 
+    // 数学公式：KaTeX 离线渲染（无 CDN）；katex 未加载或抛错时回退为原样占位。
+    // 入参 latex 来自已转义的文本，回退时直接使用，避免二次转义。
+    function renderMath(latex, displayMode) {
+        var inner;
+        try {
+            if (typeof katex === 'undefined') throw new Error('katex 未加载');
+            inner = katex.renderToString(latex, { throwOnError: false, displayMode: displayMode });
+        } catch (e) {
+            inner = latex;
+        }
+        return displayMode
+            ? '<div class="math-block">' + inner + '</div>'
+            : '<span class="math-inline">' + inner + '</span>';
+    }
+
     // 渲染消息文本：先转义（防 XSS），再按行解析块级 Markdown（``` 代码块、- / 1. 列表），
     // 行内语法（**粗体**、*斜体*、`代码`、[链接](url)、@提及）见 renderInlineMarkdown。
     // 换行依赖 .msg-text 的 white-space: pre-wrap，块级元素前后不输出多余换行。
@@ -131,6 +150,9 @@
         const ulRe = /^\s*-\s+/;
         const olRe = /^\s*\d+\.\s+/;
         const fenceRe = /^\s*```/;
+        const hRe = /^(#{1,5})\s+(.+)$/;             // 标题：# + 空格（#tag 不算标题）
+        const mathOpenRe = /^\s*\$\$\s*$/;           // 多行公式定界：整行 $$
+        const mathSingleRe = /^\s*\$\$(.+)\$\$\s*$/; // 单行公式：整行 $$...$$
         let html = '';
         let run = []; // 普通行缓冲，用 \n 连接
         const flushRun = function() {
@@ -145,6 +167,25 @@
                 while (i < lines.length && !fenceRe.test(lines[i])) { buf.push(lines[i]); i++; }
                 i++; // 跳过收尾 ```（无则到文本末尾）
                 html += '<pre><code>' + buf.join('\n') + '</code></pre>';
+            } else if (mathOpenRe.test(lines[i])) {
+                // 多行块公式：$$ ... $$，KaTeX 渲染，未加载/抛错时回退原文
+                flushRun();
+                const buf = [];
+                i++;
+                while (i < lines.length && !mathOpenRe.test(lines[i])) { buf.push(lines[i]); i++; }
+                i++; // 跳过收尾 $$（无则到文本末尾）
+                html += renderMath(buf.join('\n'), true);
+            } else if (mathSingleRe.test(lines[i])) {
+                // 单行块公式：$$...$$
+                flushRun();
+                html += renderMath(lines[i].replace(mathSingleRe, '$1'), true);
+                i++;
+            } else if (hRe.test(lines[i])) {
+                // 标题 # ~ #####，内容仍走行内渲染（粗体/斜体/代码/链接/@提及）
+                flushRun();
+                const h = lines[i].match(hRe);
+                html += '<h' + h[1].length + '>' + renderInlineMarkdown(h[2]) + '</h' + h[1].length + '>';
+                i++;
             } else if (ulRe.test(lines[i]) || olRe.test(lines[i])) {
                 flushRun();
                 const ordered = olRe.test(lines[i]);
