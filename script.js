@@ -2,10 +2,11 @@
     'use strict';
 
     /* ================================================================
-     * Sov 前端 — 已接入 sov-serverside 后端（Docker :8443）
+     * Sov 前端 — 已接入 sov-serverside 后端（Go，单进程单群组，文件存储）
      * ----------------------------------------------------------------
-     * 后端：GitHub BKYJX/sov-serverside（Go，单进程单群组，文件存储）
-     * 认证：请求头 X-User-Id + X-Password（明文比对 bcrypt，生产应置于 HTTPS 后）
+     * 认证：/auth/register 与 /auth/login 下发会话令牌，
+     *       后续请求携带 Authorization: Bearer <token>（localStorage 键 sov-session）；
+     *       X-User-Id + X-Password 仅作旧接口兼容，当前前端默认走令牌。
      * 消息：POST /chat/send  +  GET /chat/messages?date=YYYY-MM-DD&since=<unix秒>
      * 消息行格式：timestamp|senderId|ciphertext|encryptedKeysJson
      *   - ciphertext 为 Opaque 字符串，服务器不解码；
@@ -13,7 +14,7 @@
      *     属于传输占位。真正 E2EE（公钥加密 + encryptedKeys 密钥分发）待后续实现。
      * 轮询：每 3 秒增量拉取 since=最后一条时间戳，行级 id 去重。
      * ================================================================ */
-        const CONFIG = {
+    const CONFIG = {
         channel: {
             name: 'general',
             tag: '动态测试',
@@ -56,7 +57,7 @@
     const msgInput     = document.getElementById('msgInput');   // textarea
     const sendBtn      = document.getElementById('sendBtn');
     const memberList   = document.getElementById('memberList');
-        const memberCount  = document.getElementById('memberCount');
+    const memberCount  = document.getElementById('memberCount');
     const channelItems = document.querySelectorAll('.sidebar-item[data-channel]');
 
     /* ===== 登录 / 注册 元素引用 ===== */
@@ -84,7 +85,7 @@
     let messages = [];
     const receivedIds = new Set();  // 已显示消息的行 id（去重）
     const pendingSent = [];         // 本地已乐观渲染、待后端确认的消息 { localId, senderId, ciphertext }
-        const members = new Map();      // userId -> { avatar, role, displayName, status }
+    const members = new Map();      // userId -> { avatar, role, displayName, status }
     let lastPollTs = 0;             // 轮询增量起点（Unix 秒）
     let authMode = 'login';         // 登录卡片模式：login | register
     let pollTimer = null;           // 轮询定时器句柄
@@ -131,7 +132,7 @@
             a.getDate() === b.getDate();
     }
 
-        function formatDateKey(date) {
+    function formatDateKey(date) {
         return date.getFullYear() + '-' +
                String(date.getMonth() + 1).padStart(2, '0') + '-' +
                String(date.getDate()).padStart(2, '0');
@@ -191,8 +192,8 @@
 
     /* ===== 后端通信 ===== */
 
-        // 统一的接口调用封装：自动附带会话令牌，统一解析 JSON 与错误。
-    // options.authEndpoint=true 表示"这个请求本身就是在登录/注册"，其 401 由调用方展示。
+    // 统一的接口调用封装：自动附带会话令牌，统一解析 JSON 与错误。
+    // options.authEndpoint=true 表示该请求本身是在登录/注册，其 401 由调用方展示。
     async function apiFetch(path, options) {
         const opts = options || {};
         const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
@@ -291,7 +292,7 @@
         const content = decodePayload(parsed.ciphertext);
         if (content == null) return; // 无法解析的密文跳过（如其他客户端 E2EE 消息）
 
-                const msg = receiveMessage({
+            const msg = receiveMessage({
             id: id,
             username: parsed.senderId,
             displayName: displayNameOf(parsed.senderId),
@@ -323,7 +324,7 @@
             : '';
         const headerHtml = continued ? '' :
             '<div class="msg-header">' +
-                                '<span class="msg-username">' + escapeHtml(m.displayName || m.username) + roleHtml + '</span>' +
+                '<span class="msg-username">' + escapeHtml(m.displayName || m.username) + roleHtml + '</span>' +
                 '<span class="msg-timestamp">' + escapeHtml(m.timestampText || '') + '</span>' +
             '</div>';
         return '' +
@@ -409,7 +410,7 @@
         } else {
             ts = new Date();
         }
-                return {
+            return {
             id: partial.id != null ? partial.id : Date.now(),
             username: partial.username || '?',
             displayName: partial.displayName || '',
@@ -423,7 +424,7 @@
 
     /* ===== 成员管理 ===== */
 
-        // 取某 userId 的展示名：优先accounts.txt 关联出的 displayName，其次 userId 本身
+    // 取某 userId 的展示名：优先 accounts.txt 关联出的 displayName，其次 userId 本身
     function displayNameOf(userId) {
         const m = members.get(userId);
         return (m && m.displayName) || userId;
@@ -475,7 +476,7 @@
         document.getElementById('channelTag').textContent = count + ' Online';
     }
 
-        // 从后端拉取成员列表（members.txt；服务端已关联 accounts.txt 的显示名）
+    // 从后端拉取成员列表（members.txt；服务端已关联 accounts.txt 的显示名）
     async function loadMembers() {
         try {
             const data = await apiFetch(CONFIG.api.endpoints.members);
@@ -516,7 +517,7 @@
         }
     }
 
-        async function sendMessage() {
+    async function sendMessage() {
         if (!session.userId || !session.isMember) {
             toast('你还没有加入本群组，暂时无法发言', 'error');
             return;
@@ -543,7 +544,7 @@
 
         // 发送到后端
         try {
-                        await apiFetch(CONFIG.api.endpoints.send, {
+                await apiFetch(CONFIG.api.endpoints.send, {
                 method: 'POST',
                 body: JSON.stringify({
                     senderId: session.userId,
@@ -585,10 +586,10 @@
         }
     }
 
-        /* ===== 频道切换 ===== */
+    /* ===== 频道切换 ===== */
     function switchChannel(name) {
         channelItems.forEach(function(item) { item.classList.remove('active'); });
-        var target = document.querySelector('.sidebar-item[data-channel="' + CSS.escape(name) + '"]');
+    const target = document.querySelector('.sidebar-item[data-channel="' + CSS.escape(name) + '"]');
         if (target) target.classList.add('active');
         CONFIG.channel.name = name;
         document.getElementById('channelName').textContent = name;
@@ -643,7 +644,7 @@
         setTheme(saved);
     }
 
-        /* ===== 登录门禁 ===== */
+    /* ===== 登录门禁 ===== */
 
     // locked=true 锁住聊天界面并显示登录浮层；false 反
     function setLocked(locked) {
@@ -883,9 +884,9 @@
 
         // 消息操作图标事件委托
         messageArea.addEventListener('click', function(e) {
-            var reply = e.target.closest('.action-reply');
+            const reply = e.target.closest('.action-reply');
             if (reply) { msgInput.focus(); return; }
-            var edit = e.target.closest('.action-edit');
+            const edit = e.target.closest('.action-edit');
             if (edit) { msgInput.focus(); }
         });
 
