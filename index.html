@@ -4,7 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SOV chat</title>
+<<<<<<< HEAD
     <link rel="stylesheet" href="style.css">
+=======
+        <link rel="stylesheet" href="lib/katex/katex.min.css">
+        <script src="lib/katex/katex.min.js"></script>
+        <link rel="stylesheet" href="style.css">
+>>>>>>> cbe71b95308f1a0bcbbad4a24eb757aaa11ff15e
 </head>
 <body data-auth="locked">
 
@@ -77,6 +83,14 @@
                         <span class="status-dot status-online"></span>
                     </div>
                 </div>
+            </div>
+            <div class="sidebar-divider"></div>
+            <div class="sidebar-section" id="pendingSection" hidden>
+                <div class="section-label">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    待审批 — <span id="pendingCount">0</span>
+                </div>
+                <div id="pendingList"></div>
             </div>
             <div class="sidebar-divider"></div>
             <div class="sidebar-section">

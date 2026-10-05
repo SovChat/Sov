@@ -21,12 +21,21 @@
         },
         api: {
             // 自动跟随页面来源 host：页面在 10.66.1.98:80，后端同机 8443
-            get baseUrl() { return location.protocol + '//' + location.hostname + ':8443'; },
+            get baseUrl() { return location.protocol + '//' + location.hostname; },
             endpoints: {
                 health: '/health',
                 list: '/chat/messages',
                 send: '/chat/send',
                 members: '/members/list',
+                // 管理接口（管理员/版主）
+                setRole: '/admin/set-role',
+                adminGive: '/admin/give',
+                adminRoles: '/admin/roles',
+                adminCmd: '/admin/cmd',
+                // 审批（管理员/版主）
+                approve: '/members/approve',
+                reject: '/members/reject',
+                pending: '/members/pending',
                 // 账号与登录
                 register: '/auth/register',
                 login: '/auth/login',
@@ -46,6 +55,7 @@
         displayName: '',
         avatar: '?',
         isAdmin: false,
+        isMod: false,
         isMember: false,
         expiresAt: 0,
         group: null,
@@ -99,10 +109,111 @@
         });
     }
 
-    // 渲染消息文本：先转义，再把 @用户名 高亮为 mention
+    // 行内 Markdown（输入须已转义）。行内代码与链接先占位，避免被加粗/斜体/@提及二次处理
+    function renderInlineMarkdown(line) {
+        const stash = [];
+        const keep = function(html) {
+            stash.push(html);
+            return '\u0000' + (stash.length - 1) + '\u0000';
+        };
+        let s = line.replace(/`([^`\n]+)`/g, function(_, code) {
+            return keep('<code>' + code + '</code>');
+        });
+        s = s.replace(/\[([^\]\n]+)\]\(([^()\s]+)\)/g, function(all, label, url) {
+            // 仅放行 http/https/mailto/相对链接，其余按原样显示（防 javascript: XSS）
+            if (!/^(https?:\/\/|mailto:|\/|#)/i.test(url)) return all;
+            return keep('<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>');
+        });
+        // 行内数学 $...$：占位保护，先于加粗/斜体；KaTeX 渲染，未加载/抛错时回退原文
+        s = s.replace(/\$([^$\s](?:[^$\n]*[^$\s])?)\$(?!\$)/g, function(_, tex) {
+            return keep(renderMath(tex, false));
+        });
+        s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/\*(\S(?:[^*\n]*\S)?)\*/g, '<em>$1</em>');
+        // @提及仅高亮真实存在的成员或 所有人，否则按普通文本渲染
+        s = s.replace(/@([\w\u4e00-\u9fa5_-]+)/g, function(all, name) {
+            if (name === '所有人' || members.has(name)) return '<span class="mention">@' + name + '</span>';
+            return all;
+        });
+        return s.replace(/\u0000(\d+)\u0000/g, function(_, i) { return stash[+i]; });
+    }
+
+    // 数学公式：KaTeX 离线渲染（无 CDN）；katex 未加载或抛错时回退为原样占位。
+    // 入参 latex 来自已转义的文本，回退时直接使用，避免二次转义。
+    function renderMath(latex, displayMode) {
+        var inner;
+        try {
+            if (typeof katex === 'undefined') throw new Error('katex 未加载');
+            inner = katex.renderToString(latex, { throwOnError: false, displayMode: displayMode });
+        } catch (e) {
+            inner = latex;
+        }
+        return displayMode
+            ? '<div class="math-block">' + inner + '</div>'
+            : '<span class="math-inline">' + inner + '</span>';
+    }
+
+    // 渲染消息文本：先转义（防 XSS），再按行解析块级 Markdown（``` 代码块、- / 1. 列表），
+    // 行内语法（**粗体**、*斜体*、`代码`、[链接](url)、@提及）见 renderInlineMarkdown。
+    // 换行依赖 .msg-text 的 white-space: pre-wrap，块级元素前后不输出多余换行。
     function renderContent(text) {
-        const escaped = escapeHtml(text);
-        return escaped.replace(/@([\w\u4e00-\u9fa5_-]+)/g, '<span class="mention">@$1</span>');
+        const lines = escapeHtml(text).split('\n');
+        const ulRe = /^\s*-\s+/;
+        const olRe = /^\s*\d+\.\s+/;
+        const fenceRe = /^\s*```/;
+        const hRe = /^(#{1,5})\s+(.+)$/;             // 标题：# + 空格（#tag 不算标题）
+        const mathOpenRe = /^\s*\$\$\s*$/;           // 多行公式定界：整行 $$
+        const mathSingleRe = /^\s*\$\$(.+)\$\$\s*$/; // 单行公式：整行 $$...$$
+        let html = '';
+        let run = []; // 普通行缓冲，用 \n 连接
+        const flushRun = function() {
+            if (run.length) { html += run.join('\n'); run = []; }
+        };
+        let i = 0;
+        while (i < lines.length) {
+            if (fenceRe.test(lines[i])) {
+                flushRun();
+                const buf = [];
+                i++;
+                while (i < lines.length && !fenceRe.test(lines[i])) { buf.push(lines[i]); i++; }
+                i++; // 跳过收尾 ```（无则到文本末尾）
+                html += '<pre><code>' + buf.join('\n') + '</code></pre>';
+            } else if (mathOpenRe.test(lines[i])) {
+                // 多行块公式：$$ ... $$，KaTeX 渲染，未加载/抛错时回退原文
+                flushRun();
+                const buf = [];
+                i++;
+                while (i < lines.length && !mathOpenRe.test(lines[i])) { buf.push(lines[i]); i++; }
+                i++; // 跳过收尾 $$（无则到文本末尾）
+                html += renderMath(buf.join('\n'), true);
+            } else if (mathSingleRe.test(lines[i])) {
+                // 单行块公式：$$...$$
+                flushRun();
+                html += renderMath(lines[i].replace(mathSingleRe, '$1'), true);
+                i++;
+            } else if (hRe.test(lines[i])) {
+                // 标题 # ~ #####，内容仍走行内渲染（粗体/斜体/代码/链接/@提及）
+                flushRun();
+                const h = lines[i].match(hRe);
+                html += '<h' + h[1].length + '>' + renderInlineMarkdown(h[2]) + '</h' + h[1].length + '>';
+                i++;
+            } else if (ulRe.test(lines[i]) || olRe.test(lines[i])) {
+                flushRun();
+                const ordered = olRe.test(lines[i]);
+                const itemRe = ordered ? olRe : ulRe;
+                const items = [];
+                while (i < lines.length && itemRe.test(lines[i])) {
+                    items.push('<li>' + renderInlineMarkdown(lines[i].replace(itemRe, '')) + '</li>');
+                    i++;
+                }
+                html += ordered ? '<ol>' + items.join('') + '</ol>' : '<ul>' + items.join('') + '</ul>';
+            } else {
+                run.push(renderInlineMarkdown(lines[i]));
+                i++;
+            }
+        }
+        flushRun();
+        return html;
     }
 
     function formatTime(date) {
@@ -174,6 +285,7 @@
             session.displayName = data.user.displayName || data.user.userId || session.userId;
         }
         session.isAdmin = !!data.isAdmin;
+        session.isMod = !!data.isMod;
         session.isMember = !!data.isMember;
         session.group = data.group || session.group;
         session.expiresAt = data.expiresAt || 0;
@@ -500,6 +612,56 @@
         }
     }
 
+    /* ===== @cmd 管理命令模式 ===== */
+
+    // 解析命令参数：按空白切分，支持双引号包裹含空格的参数（如 @cmd give "bob" mod）
+    function parseCommandArgs(rest) {
+        const args = [];
+        const re = /"([^"]*)"|(\S+)/g;
+        let m;
+        while ((m = re.exec(rest)) !== null) {
+            args.push(m[1] !== undefined ? m[1] : m[2]);
+        }
+        return args;
+    }
+
+    // 解析 @cmd 输入：'@cmd <command> <args...>'；非命令输入返回 null
+    function parseCommandInput(text) {
+        if (text.indexOf('@cmd ') !== 0) return null;
+        const rest = text.slice(5).trim();
+        if (!rest) return null;
+        const parts = parseCommandArgs(rest);
+        return { command: parts[0], args: parts.slice(1) };
+    }
+
+    // 追加一条系统提示消息：仅本地渲染，不入聊天记录，刷新页面即消失
+    function appendSystemMessage(text) {
+        messageArea.insertAdjacentHTML('beforeend',
+            '<div class="msg-system">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>');
+        scrollToBottom();
+    }
+
+    // 发送 @cmd 命令到后端，并把结果以系统消息形式显示
+    async function runAdminCommand(command, args) {
+        // give 是不可逆操作：需原生 confirm() 二次确认，确认后追加 --confirm 参数
+        if (command === 'give' && !args.includes('--confirm')) {
+            const proceed = confirm('Transfer root admin to ' + (args[0] || '') +
+                '? You will be demoted to mod. This cannot be undone.');
+            if (!proceed) return;
+            args = args.concat('--confirm');
+        }
+        const echo = '@cmd ' + command + (args.length ? ' ' + args.join(' ') : '');
+        try {
+            const data = await apiFetch(CONFIG.api.endpoints.adminCmd, {
+                method: 'POST',
+                body: JSON.stringify({ command: command, args: args }),
+            });
+            appendSystemMessage(echo + '\n' + (data.output || 'OK'));
+        } catch (e) {
+            appendSystemMessage(echo + '\nError: ' + e.message);
+        }
+    }
+
     /* ===== 发送消息 ===== */
 
     // textarea 自适应高度
@@ -525,13 +687,22 @@
         const text = msgInput.value.trim();
         // 无论是否为空都清空输入框
         msgInput.value = '';
+        closeMentionPopup();
         autoResize();
         if (!text) return;
+
+        // @cmd 管理命令模式：仅本地处理，不作为聊天消息发送
+        const cmd = parseCommandInput(text);
+        if (cmd) {
+            msgInput.focus();
+            runAdminCommand(cmd.command, cmd.args);
+            return;
+        }
 
         const msg = makeMessage({
             username: session.userId,
             displayName: session.displayName || session.userId,
-            role: session.isAdmin ? 'Admin' : '',
+            role: session.isAdmin ? 'Admin' : (session.isMod ? 'Mod' : ''),
             avatar: session.avatar,
             content: text,
         });
@@ -660,7 +831,7 @@
         session.avatar = (shown.charAt(0) || '?').toUpperCase();
         document.getElementById('selfMemberAvatar').textContent = session.avatar;
         document.getElementById('selfMemberName').textContent = shown || 'You';
-        userChipName.textContent = shown + (session.isAdmin ? ' · Admin' : '');
+        userChipName.textContent = shown + (session.isAdmin ? ' · Admin' : (session.isMod ? ' · Mod' : ''));
         userChipAvatar.textContent = session.avatar;
     }
 
@@ -777,6 +948,7 @@
         session.displayName = '';
         session.avatar = '?';
         session.isAdmin = false;
+        session.isMod = false;
         session.isMember = false;
         stopPolling();
         resetChatState();
@@ -809,6 +981,87 @@
         }
     }
 
+    /* ===== 侧栏「待审批」面板（admin / mod 专用） ===== */
+
+    // 按当前登录身份显隐待审批面板，并拉取列表
+    async function refreshPendingPanel() {
+        const section = document.getElementById('pendingSection');
+        if (!section) return;
+        if (!session.isAdmin && !session.isMod) { section.hidden = true; return; }
+        section.hidden = false;
+        // 公开频道没有待审批流程：直接提示，不打接口
+        if (!groupInfo) {
+            try { groupInfo = await apiFetch(CONFIG.api.endpoints.health, { authEndpoint: true }); }
+            catch (e) { /* 后端状态未知：按私有处理，交给接口结果 */ }
+        }
+        if (groupInfo && groupInfo.public) {
+            document.getElementById('pendingCount').textContent = '0';
+            document.getElementById('pendingList').textContent = 'Pending list unavailable for public servers';
+            return;
+        }
+        apiFetch(CONFIG.api.endpoints.pending).then(function(data) {
+            renderPendingList(data.pending || []);
+        }).catch(function(e) {
+            document.getElementById('pendingList').textContent = 'Failed to load pending list: ' + e.message;
+        });
+    }
+
+    // 渲染待审批列表，每项带 Approve / Reject 按钮（点击处理见 bindEvents 的事件委托）
+    function renderPendingList(list) {
+        const listBox = document.getElementById('pendingList');
+        document.getElementById('pendingCount').textContent = String(list.length);
+        listBox.innerHTML = '';
+        if (!list.length) {
+            listBox.innerHTML = '<div class="pending-empty">No pending requests</div>';
+            return;
+        }
+        list.forEach(function(p) {
+            if (!p || !p.userId) return;
+            const row = document.createElement('div');
+            row.className = 'pending-item';
+            row.dataset.userId = p.userId;
+            const name = document.createElement('span');
+            name.className = 'pending-name';
+            name.textContent = p.userId;
+            const date = document.createElement('span');
+            date.className = 'pending-date';
+            date.textContent = p.requestDate || '';
+            const actions = document.createElement('span');
+            actions.className = 'pending-actions';
+            const okBtn = document.createElement('button');
+            okBtn.type = 'button';
+            okBtn.className = 'pending-btn pending-approve';
+            okBtn.textContent = 'Approve';
+            const noBtn = document.createElement('button');
+            noBtn.type = 'button';
+            noBtn.className = 'pending-btn pending-reject';
+            noBtn.textContent = 'Reject';
+            actions.appendChild(okBtn);
+            actions.appendChild(noBtn);
+            row.appendChild(name);
+            row.appendChild(date);
+            row.appendChild(actions);
+            listBox.appendChild(row);
+        });
+    }
+
+    // 处理 Approve / Reject 点击：调接口后刷新列表
+    async function handlePendingAction(btn, approve) {
+        const row = btn.closest('.pending-item');
+        const userId = row && row.dataset.userId;
+        if (!userId) return;
+        try {
+            await apiFetch(approve ? CONFIG.api.endpoints.approve : CONFIG.api.endpoints.reject, {
+                method: 'POST',
+                body: JSON.stringify({ userId: userId }),
+            });
+            toast((approve ? '已批准 ' : '已拒绝 ') + userId, 'success');
+        } catch (e) {
+            toast('操作失败：' + e.message, 'error');
+        }
+        refreshPendingPanel();
+    }
+
     /* ===== 聊天流程 ===== */
 
     function resetChatState() {
@@ -826,11 +1079,12 @@
         memberList.querySelectorAll('.member-item:not(#selfMemberItem)').forEach(function(el) { el.remove(); });
         members.set(session.userId, {
             avatar: session.avatar,
-            role: session.isAdmin ? 'Admin' : '',
+            role: session.isAdmin ? 'Admin' : (session.isMod ? 'Mod' : ''),
             displayName: session.displayName || session.userId,
             status: 'online',
         });
         updateOnlineCount();
+        refreshPendingPanel();
 
         if (!session.isMember) {
             // 未入群（私有群组待审批）：不拉消息也不轮询，服务端会返回 403
@@ -865,14 +1119,131 @@
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
+    /* ===== @提及弹出层 ===== */
+
+    let mentionState = null;   // 打开时：{ start: '@'的位置, query: '@后已输入文本', items, active }
+    let mentionPopupEl = null;
+
+    // 从光标处向前找 @token：@ 须在文本开头或空白之后（排除邮箱 a@b、URL /@user），后跟 0..n 个合法字符
+    function getMentionContext() {
+        const caret = msgInput.selectionStart;
+        const m = msgInput.value.slice(0, caret).match(/(^|\s)@([\w\u4e00-\u9fa5_-]*)$/);
+        if (!m) return null;
+        return { start: caret - m[2].length - 1, query: m[2] };
+    }
+
+    // 候选列表：所有人 → 自己 → 其他成员；按 userId/displayName 包含匹配，忽略大小写
+    function filterMentionItems(query) {
+        const needle = query.toLowerCase();
+        const items = [{ userId: '所有人', displayName: '所有人' }];
+        if (session.userId) {
+            items.push({ userId: session.userId, displayName: session.displayName || session.userId });
+        }
+        members.forEach(function(info, userId) {
+            if (userId === session.userId) return;
+            items.push({ userId: userId, displayName: info.displayName || userId });
+        });
+        if (!needle) return items;
+        return items.filter(function(it) {
+            return it.userId.toLowerCase().indexOf(needle) !== -1 ||
+                   it.displayName.toLowerCase().indexOf(needle) !== -1;
+        });
+    }
+
+    function ensureMentionPopupEl() {
+        if (mentionPopupEl) return mentionPopupEl;
+        mentionPopupEl = document.createElement('div');
+        mentionPopupEl.className = 'mention-popup';
+        document.querySelector('.chat-footer').appendChild(mentionPopupEl);
+        return mentionPopupEl;
+    }
+
+    // 用 textContent 构建行，避免把成员名当 HTML 插入
+    function renderMentionPopup() {
+        const el = ensureMentionPopupEl();
+        el.innerHTML = '';
+        mentionState.items.forEach(function(item, i) {
+            const row = document.createElement('div');
+            row.className = 'mention-item' + (i === mentionState.active ? ' mention-active' : '');
+            const avatar = document.createElement('span');
+            avatar.className = 'mention-avatar';
+            avatar.textContent = item.userId.charAt(0).toUpperCase();
+            const name = document.createElement('span');
+            name.className = 'mention-name';
+            name.textContent = item.displayName;
+            const uid = document.createElement('span');
+            uid.className = 'mention-uid';
+            uid.textContent = item.userId;
+            row.appendChild(avatar);
+            row.appendChild(name);
+            row.appendChild(uid);
+            row.addEventListener('mousedown', function(e) {
+                e.preventDefault(); // 点击选择时不让 textarea 失焦
+                pickMention(item);
+            });
+            el.appendChild(row);
+        });
+        el.classList.add('open');
+        const act = el.children[mentionState.active];
+        if (act) act.scrollIntoView({ block: 'nearest' });
+    }
+
+    function updateMentionPopup() {
+        // @cmd 命令模式：输入以 "@cmd " 开头时不弹 @提及候选
+        if (msgInput.value.indexOf('@cmd ') === 0) { closeMentionPopup(); return; }
+        const ctx = getMentionContext();
+        if (!ctx) { closeMentionPopup(); return; }
+        const items = filterMentionItems(ctx.query);
+        if (!items.length) { closeMentionPopup(); return; }
+        mentionState = { start: ctx.start, query: ctx.query, items: items, active: 0 };
+        renderMentionPopup();
+    }
+
+    function closeMentionPopup() {
+        mentionState = null;
+        if (mentionPopupEl) mentionPopupEl.classList.remove('open');
+    }
+
+    function moveMentionActive(delta) {
+        const n = mentionState.items.length;
+        mentionState.active = (mentionState.active + delta + n) % n;
+        renderMentionPopup();
+    }
+
+    function pickMentionActive() {
+        const item = mentionState && mentionState.items[mentionState.active];
+        if (item) pickMention(item);
+    }
+
+    // 选中：把 @+已输入文本 替换为 @userId+空格，光标落在空格后
+    function pickMention(item) {
+        const st = mentionState;
+        closeMentionPopup();
+        if (!st) return;
+        const head = msgInput.value.slice(0, st.start);
+        const tail = msgInput.value.slice(st.start + 1 + st.query.length);
+        const insert = '@' + item.userId + ' ';
+        msgInput.value = head + insert + tail;
+        const caret = head.length + insert.length;
+        msgInput.setSelectionRange(caret, caret);
+        autoResize();
+        msgInput.focus();
+    }
+
     /* ===== 事件绑定 ===== */
 
     function bindEvents() {
         // 发送按钮
         sendBtn.addEventListener('click', sendMessage);
 
-        // textarea：Enter 发送，Shift+Enter 换行
+        // textarea：Enter 发送，Shift+Enter 换行；弹出层打开时方向键/Enter/Esc 优先操作候选
         msgInput.addEventListener('keydown', function(e) {
+            if (mentionState) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveMentionActive(1); return; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); moveMentionActive(-1); return; }
+                if (e.key === 'Enter') { e.preventDefault(); pickMentionActive(); return; }
+                if (e.key === 'Escape') { e.preventDefault(); closeMentionPopup(); return; }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
@@ -881,6 +1252,15 @@
 
         // textarea 自适应高度
         msgInput.addEventListener('input', autoResize);
+        // @提及弹出层：随输入更新候选（无匹配自动关闭，再匹配自动重开）
+        msgInput.addEventListener('input', updateMentionPopup);
+
+        // 点击弹层与输入框之外的区域时关闭弹层
+        document.addEventListener('click', function(e) {
+            if (mentionState && mentionPopupEl && !mentionPopupEl.contains(e.target) && e.target !== msgInput) {
+                closeMentionPopup();
+            }
+        });
 
         // 消息操作图标事件委托
         messageArea.addEventListener('click', function(e) {
@@ -889,6 +1269,16 @@
             const edit = e.target.closest('.action-edit');
             if (edit) { msgInput.focus(); }
         });
+
+        // 待审批面板：Approve / Reject 事件委托
+        const pendingListBox = document.getElementById('pendingList');
+        if (pendingListBox) {
+            pendingListBox.addEventListener('click', function(e) {
+                const btn = e.target.closest('.pending-btn');
+                if (!btn) return;
+                handlePendingAction(btn, btn.classList.contains('pending-approve'));
+            });
+        }
 
         // 频道切换
         channelItems.forEach(function(item) {
