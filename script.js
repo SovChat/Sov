@@ -26,6 +26,15 @@
                 list: '/chat/messages',
                 send: '/chat/send',
                 members: '/members/list',
+                // 管理接口（管理员/版主）
+                setRole: '/admin/set-role',
+                adminGive: '/admin/give',
+                adminRoles: '/admin/roles',
+                adminCmd: '/admin/cmd',
+                // 审批（管理员/版主）
+                approve: '/members/approve',
+                reject: '/members/reject',
+                pending: '/members/pending',
                 // 账号与登录
                 register: '/auth/register',
                 login: '/auth/login',
@@ -45,6 +54,7 @@
         displayName: '',
         avatar: '?',
         isAdmin: false,
+        isMod: false,
         isMember: false,
         expiresAt: 0,
         group: null,
@@ -274,6 +284,7 @@
             session.displayName = data.user.displayName || data.user.userId || session.userId;
         }
         session.isAdmin = !!data.isAdmin;
+        session.isMod = !!data.isMod;
         session.isMember = !!data.isMember;
         session.group = data.group || session.group;
         session.expiresAt = data.expiresAt || 0;
@@ -600,6 +611,56 @@
         }
     }
 
+    /* ===== @cmd 管理命令模式 ===== */
+
+    // 解析命令参数：按空白切分，支持双引号包裹含空格的参数（如 @cmd give "bob" mod）
+    function parseCommandArgs(rest) {
+        const args = [];
+        const re = /"([^"]*)"|(\S+)/g;
+        let m;
+        while ((m = re.exec(rest)) !== null) {
+            args.push(m[1] !== undefined ? m[1] : m[2]);
+        }
+        return args;
+    }
+
+    // 解析 @cmd 输入：'@cmd <command> <args...>'；非命令输入返回 null
+    function parseCommandInput(text) {
+        if (text.indexOf('@cmd ') !== 0) return null;
+        const rest = text.slice(5).trim();
+        if (!rest) return null;
+        const parts = parseCommandArgs(rest);
+        return { command: parts[0], args: parts.slice(1) };
+    }
+
+    // 追加一条系统提示消息：仅本地渲染，不入聊天记录，刷新页面即消失
+    function appendSystemMessage(text) {
+        messageArea.insertAdjacentHTML('beforeend',
+            '<div class="msg-system">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>');
+        scrollToBottom();
+    }
+
+    // 发送 @cmd 命令到后端，并把结果以系统消息形式显示
+    async function runAdminCommand(command, args) {
+        // give 是不可逆操作：需原生 confirm() 二次确认，确认后追加 --confirm 参数
+        if (command === 'give' && !args.includes('--confirm')) {
+            const proceed = confirm('Transfer root admin to ' + (args[0] || '') +
+                '? You will be demoted to mod. This cannot be undone.');
+            if (!proceed) return;
+            args = args.concat('--confirm');
+        }
+        const echo = '@cmd ' + command + (args.length ? ' ' + args.join(' ') : '');
+        try {
+            const data = await apiFetch(CONFIG.api.endpoints.adminCmd, {
+                method: 'POST',
+                body: JSON.stringify({ command: command, args: args }),
+            });
+            appendSystemMessage(echo + '\n' + (data.output || 'OK'));
+        } catch (e) {
+            appendSystemMessage(echo + '\nError: ' + e.message);
+        }
+    }
+
     /* ===== 发送消息 ===== */
 
     // textarea 自适应高度
@@ -629,10 +690,18 @@
         autoResize();
         if (!text) return;
 
+        // @cmd 管理命令模式：仅本地处理，不作为聊天消息发送
+        const cmd = parseCommandInput(text);
+        if (cmd) {
+            msgInput.focus();
+            runAdminCommand(cmd.command, cmd.args);
+            return;
+        }
+
         const msg = makeMessage({
             username: session.userId,
             displayName: session.displayName || session.userId,
-            role: session.isAdmin ? 'Admin' : '',
+            role: session.isAdmin ? 'Admin' : (session.isMod ? 'Mod' : ''),
             avatar: session.avatar,
             content: text,
         });
@@ -761,7 +830,7 @@
         session.avatar = (shown.charAt(0) || '?').toUpperCase();
         document.getElementById('selfMemberAvatar').textContent = session.avatar;
         document.getElementById('selfMemberName').textContent = shown || 'You';
-        userChipName.textContent = shown + (session.isAdmin ? ' · Admin' : '');
+        userChipName.textContent = shown + (session.isAdmin ? ' · Admin' : (session.isMod ? ' · Mod' : ''));
         userChipAvatar.textContent = session.avatar;
     }
 
@@ -878,6 +947,7 @@
         session.displayName = '';
         session.avatar = '?';
         session.isAdmin = false;
+        session.isMod = false;
         session.isMember = false;
         stopPolling();
         resetChatState();
@@ -910,6 +980,87 @@
         }
     }
 
+    /* ===== 侧栏「待审批」面板（admin / mod 专用） ===== */
+
+    // 按当前登录身份显隐待审批面板，并拉取列表
+    async function refreshPendingPanel() {
+        const section = document.getElementById('pendingSection');
+        if (!section) return;
+        if (!session.isAdmin && !session.isMod) { section.hidden = true; return; }
+        section.hidden = false;
+        // 公开频道没有待审批流程：直接提示，不打接口
+        if (!groupInfo) {
+            try { groupInfo = await apiFetch(CONFIG.api.endpoints.health, { authEndpoint: true }); }
+            catch (e) { /* 后端状态未知：按私有处理，交给接口结果 */ }
+        }
+        if (groupInfo && groupInfo.public) {
+            document.getElementById('pendingCount').textContent = '0';
+            document.getElementById('pendingList').textContent = 'Pending list unavailable for public servers';
+            return;
+        }
+        apiFetch(CONFIG.api.endpoints.pending).then(function(data) {
+            renderPendingList(data.pending || []);
+        }).catch(function(e) {
+            document.getElementById('pendingList').textContent = 'Failed to load pending list: ' + e.message;
+        });
+    }
+
+    // 渲染待审批列表，每项带 Approve / Reject 按钮（点击处理见 bindEvents 的事件委托）
+    function renderPendingList(list) {
+        const listBox = document.getElementById('pendingList');
+        document.getElementById('pendingCount').textContent = String(list.length);
+        listBox.innerHTML = '';
+        if (!list.length) {
+            listBox.innerHTML = '<div class="pending-empty">No pending requests</div>';
+            return;
+        }
+        list.forEach(function(p) {
+            if (!p || !p.userId) return;
+            const row = document.createElement('div');
+            row.className = 'pending-item';
+            row.dataset.userId = p.userId;
+            const name = document.createElement('span');
+            name.className = 'pending-name';
+            name.textContent = p.userId;
+            const date = document.createElement('span');
+            date.className = 'pending-date';
+            date.textContent = p.requestDate || '';
+            const actions = document.createElement('span');
+            actions.className = 'pending-actions';
+            const okBtn = document.createElement('button');
+            okBtn.type = 'button';
+            okBtn.className = 'pending-btn pending-approve';
+            okBtn.textContent = 'Approve';
+            const noBtn = document.createElement('button');
+            noBtn.type = 'button';
+            noBtn.className = 'pending-btn pending-reject';
+            noBtn.textContent = 'Reject';
+            actions.appendChild(okBtn);
+            actions.appendChild(noBtn);
+            row.appendChild(name);
+            row.appendChild(date);
+            row.appendChild(actions);
+            listBox.appendChild(row);
+        });
+    }
+
+    // 处理 Approve / Reject 点击：调接口后刷新列表
+    async function handlePendingAction(btn, approve) {
+        const row = btn.closest('.pending-item');
+        const userId = row && row.dataset.userId;
+        if (!userId) return;
+        try {
+            await apiFetch(approve ? CONFIG.api.endpoints.approve : CONFIG.api.endpoints.reject, {
+                method: 'POST',
+                body: JSON.stringify({ userId: userId }),
+            });
+            toast((approve ? '已批准 ' : '已拒绝 ') + userId, 'success');
+        } catch (e) {
+            toast('操作失败：' + e.message, 'error');
+        }
+        refreshPendingPanel();
+    }
+
     /* ===== 聊天流程 ===== */
 
     function resetChatState() {
@@ -927,11 +1078,12 @@
         memberList.querySelectorAll('.member-item:not(#selfMemberItem)').forEach(function(el) { el.remove(); });
         members.set(session.userId, {
             avatar: session.avatar,
-            role: session.isAdmin ? 'Admin' : '',
+            role: session.isAdmin ? 'Admin' : (session.isMod ? 'Mod' : ''),
             displayName: session.displayName || session.userId,
             status: 'online',
         });
         updateOnlineCount();
+        refreshPendingPanel();
 
         if (!session.isMember) {
             // 未入群（私有群组待审批）：不拉消息也不轮询，服务端会返回 403
@@ -1036,6 +1188,8 @@
     }
 
     function updateMentionPopup() {
+        // @cmd 命令模式：输入以 "@cmd " 开头时不弹 @提及候选
+        if (msgInput.value.indexOf('@cmd ') === 0) { closeMentionPopup(); return; }
         const ctx = getMentionContext();
         if (!ctx) { closeMentionPopup(); return; }
         const items = filterMentionItems(ctx.query);
@@ -1114,6 +1268,16 @@
             var edit = e.target.closest('.action-edit');
             if (edit) { msgInput.focus(); }
         });
+
+        // 待审批面板：Approve / Reject 事件委托
+        const pendingListBox = document.getElementById('pendingList');
+        if (pendingListBox) {
+            pendingListBox.addEventListener('click', function(e) {
+                const btn = e.target.closest('.pending-btn');
+                if (!btn) return;
+                handlePendingAction(btn, btn.classList.contains('pending-approve'));
+            });
+        }
 
         // 频道切换
         channelItems.forEach(function(item) {

@@ -1173,3 +1173,75 @@
             .auth-card { padding: 18px; }
             .user-chip .user-name { display: none; }
         }
+
+        /* ===== 待审批面板（admin / mod 专用，侧栏） ===== */
+        .pending-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 10px;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .pending-item:hover { background: var(--action-bg); }
+
+        .pending-item .pending-name {
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .pending-item .pending-date {
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .pending-item .pending-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 4px;
+        }
+
+        .pending-btn {
+            font-size: 11px;
+            padding: 2px 8px;
+            border: 1px solid var(--border-msg);
+            border-radius: 10px;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+
+        .pending-btn:hover { background: var(--action-bg); }
+
+        .pending-approve:hover {
+            color: var(--online-badge-text);
+            border-color: var(--online-dot);
+        }
+
+        .pending-reject:hover {
+            color: #d3564f;
+            border-color: rgba(214, 69, 69, 0.5);
+        }
+
+        .pending-empty {
+            padding: 4px 10px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* ===== @cmd 系统提示（仅本地渲染，不入聊天记录） ===== */
+        .msg-system {
+            font-size: 12px;
+            font-style: italic;
+            color: var(--text-muted);
+            padding: 2px 20px 6px 52px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            user-select: text;
+        }
