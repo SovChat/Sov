@@ -115,7 +115,11 @@
         });
         s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
         s = s.replace(/\*(\S(?:[^*\n]*\S)?)\*/g, '<em>$1</em>');
-        s = s.replace(/@([\w\u4e00-\u9fa5_-]+)/g, '<span class="mention">@$1</span>');
+        // @提及仅高亮真实存在的成员或 所有人，否则按普通文本渲染
+        s = s.replace(/@([\w\u4e00-\u9fa5_-]+)/g, function(all, name) {
+            if (name === '所有人' || members.has(name)) return '<span class="mention">@' + name + '</span>';
+            return all;
+        });
         return s.replace(/\u0000(\d+)\u0000/g, function(_, i) { return stash[+i]; });
     }
 
@@ -580,6 +584,7 @@
         const text = msgInput.value.trim();
         // 无论是否为空都清空输入框
         msgInput.value = '';
+        closeMentionPopup();
         autoResize();
         if (!text) return;
 
@@ -920,14 +925,129 @@
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
+    /* ===== @提及弹出层 ===== */
+
+    let mentionState = null;   // 打开时：{ start: '@'的位置, query: '@后已输入文本', items, active }
+    let mentionPopupEl = null;
+
+    // 从光标处向前找 @token：@ 须在文本开头或空白之后（排除邮箱 a@b、URL /@user），后跟 0..n 个合法字符
+    function getMentionContext() {
+        const caret = msgInput.selectionStart;
+        const m = msgInput.value.slice(0, caret).match(/(^|\s)@([\w\u4e00-\u9fa5_-]*)$/);
+        if (!m) return null;
+        return { start: caret - m[2].length - 1, query: m[2] };
+    }
+
+    // 候选列表：所有人 → 自己 → 其他成员；按 userId/displayName 包含匹配，忽略大小写
+    function filterMentionItems(query) {
+        const needle = query.toLowerCase();
+        const items = [{ userId: '所有人', displayName: '所有人' }];
+        if (session.userId) {
+            items.push({ userId: session.userId, displayName: session.displayName || session.userId });
+        }
+        members.forEach(function(info, userId) {
+            if (userId === session.userId) return;
+            items.push({ userId: userId, displayName: info.displayName || userId });
+        });
+        if (!needle) return items;
+        return items.filter(function(it) {
+            return it.userId.toLowerCase().indexOf(needle) !== -1 ||
+                   it.displayName.toLowerCase().indexOf(needle) !== -1;
+        });
+    }
+
+    function ensureMentionPopupEl() {
+        if (mentionPopupEl) return mentionPopupEl;
+        mentionPopupEl = document.createElement('div');
+        mentionPopupEl.className = 'mention-popup';
+        document.querySelector('.chat-footer').appendChild(mentionPopupEl);
+        return mentionPopupEl;
+    }
+
+    // 用 textContent 构建行，避免把成员名当 HTML 插入
+    function renderMentionPopup() {
+        const el = ensureMentionPopupEl();
+        el.innerHTML = '';
+        mentionState.items.forEach(function(item, i) {
+            const row = document.createElement('div');
+            row.className = 'mention-item' + (i === mentionState.active ? ' mention-active' : '');
+            const avatar = document.createElement('span');
+            avatar.className = 'mention-avatar';
+            avatar.textContent = item.userId.charAt(0).toUpperCase();
+            const name = document.createElement('span');
+            name.className = 'mention-name';
+            name.textContent = item.displayName;
+            const uid = document.createElement('span');
+            uid.className = 'mention-uid';
+            uid.textContent = item.userId;
+            row.appendChild(avatar);
+            row.appendChild(name);
+            row.appendChild(uid);
+            row.addEventListener('mousedown', function(e) {
+                e.preventDefault(); // 点击选择时不让 textarea 失焦
+                pickMention(item);
+            });
+            el.appendChild(row);
+        });
+        el.classList.add('open');
+        const act = el.children[mentionState.active];
+        if (act) act.scrollIntoView({ block: 'nearest' });
+    }
+
+    function updateMentionPopup() {
+        const ctx = getMentionContext();
+        if (!ctx) { closeMentionPopup(); return; }
+        const items = filterMentionItems(ctx.query);
+        if (!items.length) { closeMentionPopup(); return; }
+        mentionState = { start: ctx.start, query: ctx.query, items: items, active: 0 };
+        renderMentionPopup();
+    }
+
+    function closeMentionPopup() {
+        mentionState = null;
+        if (mentionPopupEl) mentionPopupEl.classList.remove('open');
+    }
+
+    function moveMentionActive(delta) {
+        const n = mentionState.items.length;
+        mentionState.active = (mentionState.active + delta + n) % n;
+        renderMentionPopup();
+    }
+
+    function pickMentionActive() {
+        const item = mentionState && mentionState.items[mentionState.active];
+        if (item) pickMention(item);
+    }
+
+    // 选中：把 @+已输入文本 替换为 @userId+空格，光标落在空格后
+    function pickMention(item) {
+        const st = mentionState;
+        closeMentionPopup();
+        if (!st) return;
+        const head = msgInput.value.slice(0, st.start);
+        const tail = msgInput.value.slice(st.start + 1 + st.query.length);
+        const insert = '@' + item.userId + ' ';
+        msgInput.value = head + insert + tail;
+        const caret = head.length + insert.length;
+        msgInput.setSelectionRange(caret, caret);
+        autoResize();
+        msgInput.focus();
+    }
+
     /* ===== 事件绑定 ===== */
 
     function bindEvents() {
         // 发送按钮
         sendBtn.addEventListener('click', sendMessage);
 
-        // textarea：Enter 发送，Shift+Enter 换行
+        // textarea：Enter 发送，Shift+Enter 换行；弹出层打开时方向键/Enter/Esc 优先操作候选
         msgInput.addEventListener('keydown', function(e) {
+            if (mentionState) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveMentionActive(1); return; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); moveMentionActive(-1); return; }
+                if (e.key === 'Enter') { e.preventDefault(); pickMentionActive(); return; }
+                if (e.key === 'Escape') { e.preventDefault(); closeMentionPopup(); return; }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
@@ -936,6 +1056,15 @@
 
         // textarea 自适应高度
         msgInput.addEventListener('input', autoResize);
+        // @提及弹出层：随输入更新候选（无匹配自动关闭，再匹配自动重开）
+        msgInput.addEventListener('input', updateMentionPopup);
+
+        // 点击弹层与输入框之外的区域时关闭弹层
+        document.addEventListener('click', function(e) {
+            if (mentionState && mentionPopupEl && !mentionPopupEl.contains(e.target) && e.target !== msgInput) {
+                closeMentionPopup();
+            }
+        });
 
         // 消息操作图标事件委托
         messageArea.addEventListener('click', function(e) {
